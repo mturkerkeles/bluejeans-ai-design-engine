@@ -32,7 +32,7 @@ if (!GEMINI_API_KEY) {
 // 🔑 Google Gemini / Nano Banana client
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// Nano Banana Pro = Gemini 3 Pro Image preview modeli  [oai_citation:1‡Google AI for Developers](https://ai.google.dev/gemini-api/docs/image-generation?utm_source=chatgpt.com)
+// Nano Banana Pro = Gemini 3 Pro Image preview modeli
 const MODEL_NAME = "gemini-3-pro-image-preview";
 
 // ----------------------
@@ -50,15 +50,33 @@ app.get("/", (req, res) => {
 // ----------------------
 // 4) Wix URL → gerçek HTTPS URL
 // ----------------------
+// ÖRNEK WIX URL:
+// wix:image://v1/2e3f8a_9476c8bd0b6b4e63a480f55b8cabc4aa~mv2.jpg/blue-jean-1-lot-2508.jpg#originWidth=1600&originHeight=1200
+//
+// Bizim ihtiyacımız olan gerçek static URL:
+// https://static.wixstatic.com/media/2e3f8a_9476c8bd0b6b4e63a480f55b8cabc4aa~mv2.jpg
+//
 function wixToHttps(wixUrl) {
-  // Örn: wix:image://v1/xxxxx~mv2.jpg/...
-  if (!wixUrl.startsWith("wix:image://")) return wixUrl;
+  if (!wixUrl || typeof wixUrl !== "string") {
+    throw new Error(`Geçersiz slabImageUrl: ${wixUrl}`);
+  }
 
-  const parts = wixUrl.split("/");
-  const last = parts[parts.length - 1]; // xxxxx~mv2.jpg
-  const id = last.split("~")[0];        // xxxxx
+  // Zaten normal https ise dokunma
+  if (!wixUrl.startsWith("wix:image://")) {
+    return wixUrl;
+  }
 
-  return `https://static.wixstatic.com/media/${id}`;
+  // v1/'den hemen sonra gelen ID + ~mv2.jpg kısmını yakala
+  const match = wixUrl.match(/^wix:image:\/\/v1\/([^\/#]+)/);
+  if (!match) {
+    throw new Error(`Desteklenmeyen wix:image formatı: ${wixUrl}`);
+  }
+
+  const idPart = match[1]; // 2e3f8a_9476c8bd0b6b4e63a480f55b8cabc4aa~mv2.jpg
+  const staticUrl = `https://static.wixstatic.com/media/${idPart}`;
+
+  console.log("[wixToHttps] wix:image →", staticUrl);
+  return staticUrl;
 }
 
 // ----------------------
@@ -66,15 +84,18 @@ function wixToHttps(wixUrl) {
 // ----------------------
 async function downloadImageToBase64(url) {
   console.log("⬇️ Slab image download URL:", url);
+
   const resp = await fetch(url);
   if (!resp.ok) {
     throw new Error(
       `Slab image download failed: ${resp.status} ${resp.statusText}`
     );
   }
+
   const arrayBuf = await resp.arrayBuffer();
   const base64 = Buffer.from(arrayBuf).toString("base64");
   const mimeType = resp.headers.get("content-type") || "image/jpeg";
+
   return { base64, mimeType };
 }
 
@@ -86,15 +107,13 @@ async function generateWithNanoBananaPro({ prompt, slabBase64, slabMime }) {
 
   const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-  // Gemini image generation docs: image + text birlikte parts içinde gönderilebilir  [oai_citation:2‡Google AI for Developers](https://ai.google.dev/gemini-api/docs/image-generation?utm_source=chatgpt.com)
+  // image + text birlikte parts içinde gönderilir
   const result = await model.generateContent({
     contents: [
       {
         role: "user",
         parts: [
-          {
-            text: prompt,
-          },
+          { text: prompt },
           slabBase64 && slabMime
             ? {
                 inlineData: {
