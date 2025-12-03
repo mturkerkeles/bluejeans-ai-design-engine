@@ -1,110 +1,110 @@
-// server.js — BlueJeans AI Engine (Imagen 4)
-
-// -------------------------
-// Imports
-// -------------------------
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { VertexAI } from "@google-cloud/vertexai";
+import dotenv from "dotenv";
 
-// -------------------------
-// App Setup
-// -------------------------
+dotenv.config();
+
 const app = express();
+app.use(express.json({ limit: "20mb" }));
 app.use(cors());
-app.use(express.json({ limit: "25mb" }));
 
-const PORT = process.env.PORT || 10000;
-const API_KEY = process.env.GOOGLE_API_KEY;
+const port = process.env.PORT || 10000;
 
-console.log("🚀 BlueJeans AI Engine (Imagen 4) starting...");
+// 🔐 Google credentials JSON path
+const GOOGLE_CREDENTIALS = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
-// -------------------------
-// Google Imagen 4 Init
-// -------------------------
-const genAI = new GoogleGenerativeAI(API_KEY);
+// 🔥 Imagen 4.0 model adı
+const MODEL_NAME = "imagen-4.0-generate-001";
 
-// MODEL → Imagen 4
-const MODEL_NAME = "google-imagen-4.0-generate";
+// 🌍 VertexAI Client
+const client = new VertexAI({
+  projectId: process.env.GOOGLE_PROJECT_ID,
+  location: "us-central1"
+});
 
-// -------------------------
-// Convert wix:image:// → public https:// URL
-// -------------------------
-function wixToStaticUrl(wixUrl) {
-  return wixUrl
-    .replace("wix:image://v1/", "https://static.wixstatic.com/media/")
-    .replace("~mv2", "");
-}
+const model = client.getGenerativeModel({
+  model: MODEL_NAME
+});
 
-// -------------------------
-// POST /api/design
-// -------------------------
+// ---------------------------------------------------------
+//   🔥  /api/design → main generation endpoint
+// ---------------------------------------------------------
 app.post("/api/design", async (req, res) => {
   try {
     const { prompt, slabImageUrl } = req.body;
 
-    console.log("📩 /api/design called:", req.body);
+    console.log("📥 Incoming Wix request:", { prompt, slabImageUrl });
 
-    if (!prompt || !slabImageUrl) {
-      return res.status(400).json({ ok: false, error: "Missing prompt or image" });
+    // ---------------------------------------------------------
+    // 1) Download slab reference image (from wix:image:// → https)
+    // ---------------------------------------------------------
+    let base64Image = null;
+
+    if (slabImageUrl.startsWith("wix:image://")) {
+      const httpsUrl = convertWixToHttps(slabImageUrl);
+      console.log("🌐 Converted slab URL:", httpsUrl);
+
+      const buffer = await downloadImage(httpsUrl);
+      base64Image = buffer.toString("base64");
+    } else if (slabImageUrl.startsWith("http")) {
+      const buffer = await downloadImage(slabImageUrl);
+      base64Image = buffer.toString("base64");
     }
 
-    // 1) Convert Wix URL to static URL
-    const staticUrl = wixToStaticUrl(slabImageUrl);
-    console.log("🖼️ Slab URL converted:", staticUrl);
+    // ---------------------------------------------------------
+    // 2) Call Imagen 4.0
+    // ---------------------------------------------------------
+    console.log("🎨 Calling Imagen 4.0...");
 
-    // 2) Download slab image → Base64
-    console.log("⏳ Downloading slab...");
-    const imgResp = await fetch(staticUrl);
-    const imgBuffer = await imgResp.arrayBuffer();
-    const base64Image = Buffer.from(imgBuffer).toString("base64");
-    const mimeType = imgResp.headers.get("content-type") || "image/jpeg";
+    const result = await model.generateContent({
+      prompt: prompt,
+      image: {
+        bytesBase64Encoded: base64Image
+      }
+    });
 
-    // 3) Call Imagen 4 (image + text)
-    console.log("🎨 Calling Imagen-4...");
+    const outputBase64 =
+      result?.response?.candidates?.[0]?.content?.parts?.[0]?.image?.bytesBase64Encoded;
 
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType,
-          data: base64Image
-        }
-      },
-      prompt
-    ]);
-
-    const response = await result.response;
-    const imageBase64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-    if (!imageBase64) {
-      console.log("❌ Imagen-4 did not return image");
-      return res.status(500).json({
-        ok: false,
-        error: "Imagen-4 returned no image output"
-      });
+    if (!outputBase64) {
+      console.log("❌ Imagen 4 returned empty output");
+      return res.status(500).json({ ok: false, error: "Imagen 4 returned no image" });
     }
 
-    console.log("✅ Imagen-4 OK: image generated");
+    console.log("✅ Imagen 4 generation complete");
 
-    return res.json({
+    res.json({
       ok: true,
-      imageBase64,
-      mimeType
+      imageBase64: outputBase64,
+      mimeType: "image/png"
     });
 
   } catch (err) {
     console.error("🔥 /api/design ERROR:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err.message || "Unknown backend error"
-    });
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// -------------------------
-app.listen(PORT, () => {
-  console.log(`🔥 BlueJeans AI Engine (Imagen-4) live on port ${PORT}`);
+// ---------------------------------------------------------
+// Helper: Convert wix:image:// → https://static.wixstatic.com
+// ---------------------------------------------------------
+function convertWixToHttps(wixUrl) {
+  const parts = wixUrl.split("/");
+  const id = parts[parts.length - 1].split("~")[0];
+  return `https://static.wixstatic.com/media/${id}`;
+}
+
+// ---------------------------------------------------------
+// Helper: download image from URL to buffer
+// ---------------------------------------------------------
+async function downloadImage(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Failed to download slab image");
+  return Buffer.from(await response.arrayBuffer());
+}
+
+app.listen(port, () => {
+  console.log(`🔥 BlueJeans Imagen 4 Engine running on port ${port}`);
 });
