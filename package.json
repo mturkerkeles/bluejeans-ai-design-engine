@@ -1,16 +1,17 @@
 {
-  "name": "bluejeans-ai-design-engine",
+  "name": "bluejeans-ai-engine",
   "version": "1.0.0",
+  "description": "BlueJeans Imagen 4.0 Render Engine",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js"
-  {
-  "type": "module",
+  },
   "dependencies": {
-    "@google/generative-ai": "^0.7.0",
+    "@google-cloud/vertexai": "^1.7.0",
     "node-fetch": "^3.3.2",
     "express": "^4.19.0",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0"
   }
 }
