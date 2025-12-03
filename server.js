@@ -1,9 +1,6 @@
 // server.js
-// BlueJeans AI Design Engine – Gemini 1.5 Flash (Text + Image → Image)
+// BlueJeans AI Design Engine – Gemini 2.5 Flash (Nano Banana) IMAGE + TEXT → IMAGE
 
-// ----------------------
-// 1) IMPORTS
-// ----------------------
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -13,10 +10,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 dotenv.config();
 
 // ----------------------
-// 2) ENV & CLIENT
+// 1) ENV VARS & GEMINI CLIENT
 // ----------------------
 const PORT = process.env.PORT || 8080;
-
 const GEMINI_API_KEY =
   process.env.GEMINI_API_KEY ||
   process.env.GOOGLE_API_KEY ||
@@ -24,79 +20,63 @@ const GEMINI_API_KEY =
 
 if (!GEMINI_API_KEY) {
   console.error(
-    "[FATAL] GEMINI_API_KEY is not set. " +
-      "Please add GEMINI_API_KEY in Render → Environment."
+    "[FATAL] GEMINI_API_KEY ortam değişkeni tanımlı değil. " +
+      "Render Dashboard → Environment → GEMINI_API_KEY eklemelisin."
   );
   process.exit(1);
 }
 
-// IMPORTANT: model id WITHOUT `models/` prefix or `-002` suffix
-const MODEL_NAME = "gemini-1.5-flash";
-
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
+// 🔵 Hedef model: Gemini 2.5 Flash (Nano Banana)
+const MODEL_NAME = "gemini-2.5-flash";
+
 // ----------------------
-// 3) EXPRESS APP
+// 2) EXPRESS APP
 // ----------------------
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
 app.get("/", (req, res) => {
-  res.send("BlueJeans Gemini 1.5 Flash Image Engine is running 🧠🟦");
+  res.send("BlueJeans Gemini 2.5 Flash Image Engine is running 🧠🟦");
 });
 
 // ----------------------
-// 4) wix:image:// → https://static.wixstatic.com/... ?raw=1
+// 3) Wix URL → HTTPS gerçek URL
 // ----------------------
 function wixToHttps(wixUrl) {
   if (!wixUrl || typeof wixUrl !== "string") {
-    console.warn("[wixToHttps] invalid url:", wixUrl);
-    return wixUrl;
+    throw new Error("Geçersiz slabImageUrl (undefined veya string değil).");
   }
 
   if (!wixUrl.startsWith("wix:image://")) {
-    // already a normal URL
+    // Zaten normal https ise dokunma
     return wixUrl;
   }
 
-  // Example:
-  // wix:image://v1/2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg/blue-jeans-slab_lot-802.jpg#originWidth=1600&originHeight=1200
-  const withoutPrefix = wixUrl.replace("wix:image://", "");
-  const firstSlashIndex = withoutPrefix.indexOf("/");
-  if (firstSlashIndex === -1) {
-    console.warn("[wixToHttps] unexpected format:", wixUrl);
-    return wixUrl;
-  }
+  // Örn: wix:image://v1/2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg/blue-jeans-slab_lot-802.jpg#originWidth=1600&originHeight=1200
+  const parts = wixUrl.split("/");
+  const last = parts[parts.length - 1]; // blue-jeans-slab_lot-802.jpg#...
+  const idPart = parts[parts.length - 2]; // 2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg
 
-  // "v1/2e3f8a_...~mv2.jpg/..."  → we want the part after v1/
-  const afterVersion = withoutPrefix.substring(firstSlashIndex + 1); // "2e3f8a_...~mv2.jpg/..."
-  const imageId = afterVersion.split("/")[0]; // "2e3f8a_...~mv2.jpg"
+  const id = idPart.split("~")[0]; // 2e3f8a_008affd73da44d5c918dd3fe197c04b7
 
-  let httpsUrl = `https://static.wixstatic.com/media/${imageId}`;
-  if (!httpsUrl.includes("?")) {
-    httpsUrl += "?raw=1"; // helps avoid 403
-  }
-
-  console.log("[wixToHttps] wix:image →", httpsUrl);
-  return httpsUrl;
+  // raw=1 ekleyerek, hotlink korumayı aşma şansımız artar
+  return `https://static.wixstatic.com/media/${id}~mv2.jpg?raw=1`;
 }
 
 // ----------------------
-// 5) Download slab image → base64
+// 4) Slab resmini indir → base64
 // ----------------------
 async function downloadImageToBase64(url) {
   console.log("⬇️ Slab image download URL:", url);
-
   const resp = await fetch(url);
+
   if (!resp.ok) {
     const bodyText = await resp.text().catch(() => "");
     console.error(
-      "[downloadImageToBase64] HTTP error:",
-      resp.status,
-      resp.statusText,
-      "Body:",
-      bodyText.slice(0, 300)
+      `Slab image download failed: ${resp.status} ${resp.statusText} | body: ${bodyText}`
     );
     throw new Error(
       `Slab image download failed: ${resp.status} ${resp.statusText}`
@@ -111,45 +91,39 @@ async function downloadImageToBase64(url) {
 }
 
 // ----------------------
-// 6) Gemini 1.5 Flash → IMAGE generation
+// 5) Gemini 2.5 Flash ile IMAGE + TEXT → IMAGE
 // ----------------------
 async function generateWithGeminiFlash({ prompt, slabBase64, slabMime }) {
-  console.log("[GeminiFlash] Prompt:", prompt);
+  console.log("[Gemini2.5Flash] Prompt:", prompt);
 
-  const model = genAI.getGenerativeModel({
-    model: MODEL_NAME,
-    generationConfig: {
-      // tell Gemini we want an image back
-      responseMimeType: "image/png",
-    },
-  });
+  const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-  const parts = [
-    { text: prompt },
-  ];
-
-  if (slabBase64 && slabMime) {
-    parts.push({
-      inlineData: {
-        mimeType: slabMime,
-        data: slabBase64,
-      },
-    });
-  }
-
+  // ÖNEMLİ:
+  // Burada responseMimeType göndermiyoruz.
+  // Bazı eski modeller sadece text/json kabul ediyor.
+  // 2.5 Flash image destekliyorsa inlineData ile dönecek.
   const result = await model.generateContent({
     contents: [
       {
         role: "user",
-        parts,
+        parts: [
+          { text: prompt },
+          slabBase64 && slabMime
+            ? {
+                inlineData: {
+                  mimeType: slabMime,
+                  data: slabBase64,
+                },
+              }
+            : null,
+        ].filter(Boolean),
       },
     ],
   });
 
   const candidate = result?.response?.candidates?.[0];
-  if (!candidate?.content?.parts) {
-    console.error("[GeminiFlash] empty candidate:", result);
-    throw new Error("Gemini 1.5 Flash returned an empty response.");
+  if (!candidate || !candidate.content || !candidate.content.parts) {
+    throw new Error("Gemini 2.5 Flash boş response döndürdü.");
   }
 
   const imagePart = candidate.content.parts.find(
@@ -157,18 +131,19 @@ async function generateWithGeminiFlash({ prompt, slabBase64, slabMime }) {
   );
 
   if (!imagePart) {
-    console.error("[GeminiFlash] no inlineData part:", candidate.content.parts);
-    throw new Error("Gemini response did not contain an image.");
+    throw new Error(
+      "Gemini 2.5 Flash cevabında görsel inlineData bulunamadı (model sadece text döndürüyor olabilir)."
+    );
   }
 
-  const imageBase64 = imagePart.inlineData.data;
-  const mimeType = imagePart.inlineData.mimeType || "image/png";
-
-  return { imageBase64, mimeType };
+  return {
+    imageBase64: imagePart.inlineData.data,
+    mimeType: imagePart.inlineData.mimeType || "image/png",
+  };
 }
 
 // ----------------------
-// 7) MAIN ENDPOINT: /api/design
+// 6) ANA ENDPOINT: /api/design
 // ----------------------
 app.post("/api/design", async (req, res) => {
   const { prompt, slabImageUrl, slabLabel } = req.body || {};
@@ -190,20 +165,20 @@ app.post("/api/design", async (req, res) => {
   }
 
   try {
-    // 1) Convert Wix URL → static HTTPS
+    // 1) Wix URL → HTTPS
     const httpsUrl = wixToHttps(slabImageUrl);
 
-    // 2) Download slab → base64
+    // 2) Slab indir → base64
     const { base64: slabBase64, mimeType: slabMime } =
       await downloadImageToBase64(httpsUrl);
 
-    // 3) Enrich prompt with Blue Jeans Marble info
+    // 3) Prompt zenginleştirme
     const enrichedPrompt = (slabLabel
       ? `${prompt}\n\nMaterial: premium Blue Jeans Marble ${slabLabel}, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
       : `${prompt}\n\nMaterial: premium Blue Jeans Marble, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
     ).trim();
 
-    // 4) Call Gemini (text + slab image → image)
+    // 4) Gemini 2.5 Flash ile image+text → image
     const { imageBase64, mimeType } = await generateWithGeminiFlash({
       prompt: enrichedPrompt,
       slabBase64,
@@ -215,26 +190,24 @@ app.post("/api/design", async (req, res) => {
       imageBase64,
       mimeType,
       model: MODEL_NAME,
-      received: {
-        prompt,
-        slabImageUrl,
-        slabLabel,
-      },
+      received: { prompt, slabImageUrl, slabLabel },
     });
   } catch (err) {
     console.error("🔥 [/api/design] ERROR:", err);
     return res.status(500).json({
       ok: false,
-      error: err.message || "Gemini isteği sırasında bir hata oluştu.",
+      error:
+        err.message ||
+        "Gemini 2.5 Flash isteği sırasında beklenmeyen bir hata oluştu.",
     });
   }
 });
 
 // ----------------------
-// 8) START SERVER
+// 7) SERVER’I BAŞLAT
 // ----------------------
 app.listen(PORT, () => {
   console.log(
-    `🚀 BlueJeans Gemini 1.5 Flash Image Engine listening on port ${PORT}`
+    `🚀 BlueJeans Gemini 2.5 Flash Image Engine listening on port ${PORT}`
   );
 });
