@@ -39,7 +39,8 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // ----------------------
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+// Set a generous body size limit for large base64 slab images
+app.use(express.json({ limit: "20mb" })); 
 
 app.get("/", (_req, res) => {
   res.send("BlueJeans **Gemini 3 Pro Image Engine** (Nano Banana Pro) is running 🧠🟦");
@@ -57,8 +58,7 @@ function wixToHttps(wixUrl) {
       return wixUrl;
     }
 
-    // Expected form:
-    // wix:image://v1/2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg/blue-jeans-slab_lot-802.jpg#originWidth=1600&originHeight=1200
+    // Expected form: wix:image://v1/...
     if (!wixUrl.startsWith("wix:image://")) {
       console.warn("[wixToHttps] Unknown URL format:", wixUrl);
       return null;
@@ -70,10 +70,9 @@ function wixToHttps(wixUrl) {
     const idWithExt =
       firstSlashIdx === -1
         ? withoutPrefix
-        : withoutPrefix.slice(0, firstSlashIdx); // e.g. 2e3f8a_00...~mv2.jpg
+        : withoutPrefix.slice(0, firstSlashIdx); 
 
-    const mediaId = idWithExt; // already includes extension
-
+    const mediaId = idWithExt; 
     const httpsUrl = `https://static.wixstatic.com/media/${mediaId}?raw=1`;
     console.log("[wixToHttps] wix:image →", httpsUrl);
     return httpsUrl;
@@ -122,8 +121,13 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
     model: MODEL_NAME,
   });
 
+  // 🛑 FIX: Explicitly increase the API timeout for the high-fidelity render.
+  // 180 seconds (3 minutes) is a safe minimum for G3PI.
+  const requestOptions = {
+    timeout: 180000, 
+  };
+
   // We send both the slab image and the textual instructions together.
-  // This structure works perfectly for Gemini 3 Pro Image.
   const result = await model.generateContent({
     contents: [
       {
@@ -143,7 +147,7 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
         ].filter(Boolean),
       },
     ],
-  });
+  }, requestOptions); // Pass requestOptions here
 
   const candidate = result?.response?.candidates?.[0];
   if (!candidate || !candidate.content || !candidate.content.parts) {
@@ -160,11 +164,11 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
       "[Gemini3ProImage] Full candidate parts (no inlineData found):",
       candidate.content.parts
     );
-    // The model may sometimes return only text (a description or rejection).
+    // If the model returns a text-only part, it might be a safety filter or refusal.
     const textPart = candidate.content.parts.find((p) => p.text);
     const errorDetail = textPart
-      ? `Model returned only text: "${textPart.text.substring(0, 100)}..."`
-      : "Response does not contain inline image data.";
+      ? `Model returned only text (check prompt content): "${textPart.text.substring(0, 100)}..."`
+      : "Response does not contain inline image data. Check if Wix is timing out or if the prompt content violated a policy.";
     throw new Error(
       `Image generation failed. ${errorDetail}`
     );
@@ -212,10 +216,9 @@ app.post("/api/design", async (req, res) => {
     // 3) ADVANCED BLUE JEANS MARBLE PRE-PROMPT ENGINE
 
     // (A) Global rendering style
-    // NOTE: Kept 4K for instruction, G3PI handles high resolution natively.
     const baseStyle = `
 You are an expert architectural visualization and CGI renderer.
-Generate an ultra-photorealistic, high-resolution (4K or higher) interior or exterior scene.
+Generate an ultra-photorealistic, high-resolution (4K or higher) interior or exterior scene with an **aspect ratio of 16:9** (cinematic architectural style).
 Use physically based rendering (PBR), realistic global illumination, soft natural or architectural lighting,
 accurate shadows and reflections, and cinematic composition at human eye level.
 **Ensure the lighting accurately highlights the unique characteristics and luster of the stone.**
@@ -258,8 +261,6 @@ ${userBlock}
     `.trim();
 
     // 4) Call Gemini 3 Pro Image – image+text → image
-    // NOTE: The generateWithGeminiFlashImage helper function is retained, but the
-    // model being called is now the powerful gemini-3-pro-image-preview.
     const { imageBase64, mimeType } = await generateWithGeminiFlashImage({
       prompt: finalPrompt,
       slabBase64,
@@ -270,7 +271,7 @@ ${userBlock}
       ok: true,
       imageBase64,
       mimeType,
-      model: MODEL_NAME, // Report the new model name in the response
+      model: MODEL_NAME, 
       received: {
         prompt,
         slabImageUrl,
