@@ -1,17 +1,16 @@
 {
   "name": "bluejeans-ai-engine",
   "version": "1.0.0",
-  "description": "BlueJeans Imagen 4.0 Render Engine",
-  "main": "server.js",
+  "description": "AI Design Engine for Blue Jeans Marble",
   "type": "module",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@google-cloud/vertexai": "^1.7.0",
-    "node-fetch": "^3.3.2",
-    "express": "^4.19.0",
+    "@google/genai": "^0.3.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.0"
+    "express": "^4.19.0",
+    "node-fetch": "^3.3.2"
   }
 }
