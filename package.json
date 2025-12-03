@@ -1,8 +1,8 @@
 {
   "name": "bluejeans-ai-design-engine",
   "version": "1.0.0",
-  "description": "AI Design Engine for Blue Jeans Marble",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
