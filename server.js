@@ -1,110 +1,142 @@
+// server.js
+// BlueJeans AI Design Engine – Imagen 4.0 backend (Render)
+
+// ----------------------
+// 1) IMPORTLAR
+// ----------------------
 import express from "express";
 import cors from "cors";
-import fetch from "node-fetch";
-import { VertexAI } from "@google-cloud/vertexai";
 import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
+// ----------------------
+// 2) ENV KONTROLLERİ
+// ----------------------
+const PORT = process.env.PORT || 8080;
+const GEMINI_API_KEY =
+  process.env.GEMINI_API_KEY ||
+  process.env.GOOGLE_API_KEY ||
+  process.env.GOOGLE_GENAI_API_KEY;
+
+if (!GEMINI_API_KEY) {
+  console.error(
+    "[FATAL] GEMINI_API_KEY ortam değişkeni tanımlı değil. " +
+      "Render Dashboard → Environment → GEMINI_API_KEY olarak eklemelisin."
+  );
+  process.exit(1);
+}
+
+// Google GenAI (Imagen 4.0) client
+const ai = new GoogleGenAI({
+  apiKey: GEMINI_API_KEY,
+});
+
+// ----------------------
+// 3) EXPRESS APP
+// ----------------------
 const app = express();
-app.use(express.json({ limit: "20mb" }));
 app.use(cors());
+app.use(express.json({ limit: "2mb" }));
 
-const port = process.env.PORT || 10000;
-
-// 🔐 Google credentials JSON path
-const GOOGLE_CREDENTIALS = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-
-// 🔥 Imagen 4.0 model adı
-const MODEL_NAME = "imagen-4.0-generate-001";
-
-// 🌍 VertexAI Client
-const client = new VertexAI({
-  projectId: process.env.GOOGLE_PROJECT_ID,
-  location: "us-central1"
+// Basit health-check
+app.get("/", (req, res) => {
+  res.send("BlueJeans AI Design Engine (Imagen 4.0) is running 🧠🟦");
 });
 
-const model = client.getGenerativeModel({
-  model: MODEL_NAME
-});
+// ----------------------
+// 4) HELPER: Imagen 4 ile görsel üret
+// ----------------------
+async function generateImagen4Image(prompt) {
+  console.log("[Imagen4] Prompt:", prompt);
 
-// ---------------------------------------------------------
-//   🔥  /api/design → main generation endpoint
-// ---------------------------------------------------------
-app.post("/api/design", async (req, res) => {
+  // Imagen 4.0 için resmi dokümandan birebir örnek  [oai_citation:1‡Google AI for Developers](https://ai.google.dev/gemini-api/docs/imagen)
+  const response = await ai.models.generateImages({
+    model: "imagen-4.0-generate-001",
+    prompt,
+    config: {
+      numberOfImages: 1,
+      // İstersen burada ayarları genişletiriz:
+      // aspectRatio: "4:3",
+      // imageSize: "1K",
+      // personGeneration: "dont_allow",
+    },
+  });
+
+  if (
+    !response ||
+    !response.generatedImages ||
+    response.generatedImages.length === 0
+  ) {
+    throw new Error("Imagen 4 hiçbir görsel döndürmedi.");
+  }
+
+  const img = response.generatedImages[0];
+  if (!img.image || !img.image.imageBytes) {
+    throw new Error("Imagen 4 cevabında imageBytes bulunamadı.");
+  }
+
+  const base64 = img.image.imageBytes; // Zaten base64 string
+  return {
+    imageBase64: base64,
+    mimeType: "image/png", // Imagen PNG üretiyor, istersen ayarlarız
+  };
+}
+
+// ----------------------
+// 5) ANA ENDPOINT: /generate
+// ----------------------
+app.post("/generate", async (req, res) => {
+  const { prompt, slabImageUrl, slabLabel } = req.body || {};
+
+  console.log("[/generate] Request body:", {
+    prompt,
+    slabImageUrl,
+    slabLabel,
+  });
+
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    return res.status(400).json({
+      ok: false,
+      error: "Prompt boş olamaz.",
+    });
+  }
+
   try {
-    const { prompt, slabImageUrl } = req.body;
+    // 🔵 Şu an Imagen 4 Node.js API'si yalnızca text prompt destekliyor.
+    // slabImageUrl'i ileride referans-image desteği geldiğinde kullanacağız.
+    // Şimdilik prompt'un içine slab bilgisi ekleyip modelin "Blue Jeans Marble slab" ruhunu taşımasını sağlarız.
+    const enrichedPrompt = slabLabel
+      ? `${prompt}\n\nMaterial: premium Blue Jeans Marble ${slabLabel}, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
+      : `${prompt}\n\nMaterial: premium Blue Jeans Marble, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`;
 
-    console.log("📥 Incoming Wix request:", { prompt, slabImageUrl });
+    const { imageBase64, mimeType } = await generateImagen4Image(enrichedPrompt);
 
-    // ---------------------------------------------------------
-    // 1) Download slab reference image (from wix:image:// → https)
-    // ---------------------------------------------------------
-    let base64Image = null;
-
-    if (slabImageUrl.startsWith("wix:image://")) {
-      const httpsUrl = convertWixToHttps(slabImageUrl);
-      console.log("🌐 Converted slab URL:", httpsUrl);
-
-      const buffer = await downloadImage(httpsUrl);
-      base64Image = buffer.toString("base64");
-    } else if (slabImageUrl.startsWith("http")) {
-      const buffer = await downloadImage(slabImageUrl);
-      base64Image = buffer.toString("base64");
-    }
-
-    // ---------------------------------------------------------
-    // 2) Call Imagen 4.0
-    // ---------------------------------------------------------
-    console.log("🎨 Calling Imagen 4.0...");
-
-    const result = await model.generateContent({
-      prompt: prompt,
-      image: {
-        bytesBase64Encoded: base64Image
-      }
-    });
-
-    const outputBase64 =
-      result?.response?.candidates?.[0]?.content?.parts?.[0]?.image?.bytesBase64Encoded;
-
-    if (!outputBase64) {
-      console.log("❌ Imagen 4 returned empty output");
-      return res.status(500).json({ ok: false, error: "Imagen 4 returned no image" });
-    }
-
-    console.log("✅ Imagen 4 generation complete");
-
-    res.json({
+    return res.json({
       ok: true,
-      imageBase64: outputBase64,
-      mimeType: "image/png"
+      imageBase64,
+      mimeType,
+      usedModel: "imagen-4.0-generate-001",
+      received: {
+        prompt,
+        slabImageUrl,
+        slabLabel,
+      },
     });
-
   } catch (err) {
-    console.error("🔥 /api/design ERROR:", err);
-    res.status(500).json({ ok: false, error: err.message });
+    console.error("[/generate] ERROR:", err);
+
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Imagen 4 isteği sırasında beklenmeyen bir hata oluştu.",
+    });
   }
 });
 
-// ---------------------------------------------------------
-// Helper: Convert wix:image:// → https://static.wixstatic.com
-// ---------------------------------------------------------
-function convertWixToHttps(wixUrl) {
-  const parts = wixUrl.split("/");
-  const id = parts[parts.length - 1].split("~")[0];
-  return `https://static.wixstatic.com/media/${id}`;
-}
-
-// ---------------------------------------------------------
-// Helper: download image from URL to buffer
-// ---------------------------------------------------------
-async function downloadImage(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Failed to download slab image");
-  return Buffer.from(await response.arrayBuffer());
-}
-
-app.listen(port, () => {
-  console.log(`🔥 BlueJeans Imagen 4 Engine running on port ${port}`);
+// ----------------------
+// 6) SERVER’I BAŞLAT
+// ----------------------
+app.listen(PORT, () => {
+  console.log(`BlueJeans AI Design Engine (Imagen 4.0) listening on port ${PORT}`);
 });
