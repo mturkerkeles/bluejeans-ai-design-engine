@@ -1,5 +1,5 @@
 // server.js
-// BlueJeans AI Design Engine – Nano Banana Pro (Gemini 3 Pro Image)
+// BlueJeans AI Design Engine – Gemini 1.5 Flash (image + text → image)
 
 // ----------------------
 // 1) IMPORTLAR
@@ -15,7 +15,8 @@ dotenv.config();
 // ----------------------
 // 2) ENV KONTROLLERİ
 // ----------------------
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 10000;
+
 const GEMINI_API_KEY =
   process.env.GEMINI_API_KEY ||
   process.env.GOOGLE_API_KEY ||
@@ -24,16 +25,16 @@ const GEMINI_API_KEY =
 if (!GEMINI_API_KEY) {
   console.error(
     "[FATAL] GEMINI_API_KEY ortam değişkeni tanımlı değil. " +
-      "Lütfen Render Dashboard → Environment → GEMINI_API_KEY ekle."
+      "Render Dashboard → Environment → GEMINI_API_KEY olarak eklemelisin."
   );
   process.exit(1);
 }
 
-// 🔑 Google Gemini / Nano Banana client
+// 🔑 Google Gemini client
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// Nano Banana Pro = Gemini 3 Pro Image preview modeli
-const MODEL_NAME = "gemini-3-pro-image-preview";
+// Resim üretebilen stabil model
+const MODEL_NAME = "gemini-1.5-flash";
 
 // ----------------------
 // 3) EXPRESS APP
@@ -44,39 +45,25 @@ app.use(express.json({ limit: "20mb" }));
 
 // Basit health-check
 app.get("/", (req, res) => {
-  res.send("BlueJeans Nano Banana Pro Engine is running 🧠🍌");
+  res.send("BlueJeans Gemini 1.5 Flash Engine is running 🧠🟦");
 });
 
 // ----------------------
 // 4) Wix URL → gerçek HTTPS URL
 // ----------------------
-// ÖRNEK WIX URL:
-// wix:image://v1/2e3f8a_9476c8bd0b6b4e63a480f55b8cabc4aa~mv2.jpg/blue-jean-1-lot-2508.jpg#originWidth=1600&originHeight=1200
-//
-// Bizim ihtiyacımız olan gerçek static URL:
-// https://static.wixstatic.com/media/2e3f8a_9476c8bd0b6b4e63a480f55b8cabc4aa~mv2.jpg
-//
 function wixToHttps(wixUrl) {
-  if (!wixUrl || typeof wixUrl !== "string") {
-    throw new Error(`Geçersiz slabImageUrl: ${wixUrl}`);
-  }
+  if (!wixUrl || typeof wixUrl !== "string") return wixUrl;
 
-  // Zaten normal https ise dokunma
-  if (!wixUrl.startsWith("wix:image://")) {
-    return wixUrl;
-  }
+  // Örn: wix:image://v1/2e3f8a_xxxxx~mv2.jpg/...
+  if (!wixUrl.startsWith("wix:image://")) return wixUrl;
 
-  // v1/'den hemen sonra gelen ID + ~mv2.jpg kısmını yakala
-  const match = wixUrl.match(/^wix:image:\/\/v1\/([^\/#]+)/);
-  if (!match) {
-    throw new Error(`Desteklenmeyen wix:image formatı: ${wixUrl}`);
-  }
+  const parts = wixUrl.split("/");
+  const last = parts[parts.length - 1]; // 2e3f8a_xxxxx~mv2.jpg#...
+  const id = last.split("~")[0]; // 2e3f8a_xxxxx
 
-  const idPart = match[1]; // 2e3f8a_9476c8bd0b6b4e63a480f55b8cabc4aa~mv2.jpg
-  const staticUrl = `https://static.wixstatic.com/media/${idPart}`;
-
-  console.log("[wixToHttps] wix:image →", staticUrl);
-  return staticUrl;
+  const httpsUrl = `https://static.wixstatic.com/media/${id}~mv2.jpg`;
+  console.log("[wixToHttps] wix:image →", httpsUrl);
+  return httpsUrl;
 }
 
 // ----------------------
@@ -96,19 +83,19 @@ async function downloadImageToBase64(url) {
   const base64 = Buffer.from(arrayBuf).toString("base64");
   const mimeType = resp.headers.get("content-type") || "image/jpeg";
 
+  console.log("✅ Slab image downloaded, mimeType:", mimeType);
   return { base64, mimeType };
 }
 
 // ----------------------
-// 6) Nano Banana Pro ile IMAGE + TEXT → IMAGE
+// 6) Gemini 1.5 Flash ile IMAGE + TEXT → IMAGE
 // ----------------------
-async function generateWithNanoBananaPro({ prompt, slabBase64, slabMime }) {
-  console.log("[NanoBananaPro] Prompt:", prompt);
+async function generateWithGeminiImage({ prompt, slabBase64, slabMime }) {
+  console.log("[Gemini] Prompt:", prompt);
 
   const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-  // image + text birlikte parts içinde gönderilir
-  const result = await model.generateContent({
+  const request = {
     contents: [
       {
         role: "user",
@@ -125,11 +112,22 @@ async function generateWithNanoBananaPro({ prompt, slabBase64, slabMime }) {
         ].filter(Boolean),
       },
     ],
-  });
+  };
 
-  const candidate = result?.response?.candidates?.[0];
+  console.log("[Gemini] Request parts count:", request.contents[0].parts.length);
+
+  const result = await model.generateContent(request);
+  const response = result.response;
+
+  console.log(
+    "[Gemini] Raw response candidates length:",
+    response?.candidates?.length
+  );
+
+  const candidate = response?.candidates?.[0];
   if (!candidate || !candidate.content || !candidate.content.parts) {
-    throw new Error("Nano Banana Pro boş response döndürdü.");
+    console.error("[Gemini] Empty candidate:", JSON.stringify(response, null, 2));
+    throw new Error("Gemini boş response döndürdü.");
   }
 
   // parts içinde inlineData olan kısmı bul
@@ -138,12 +136,17 @@ async function generateWithNanoBananaPro({ prompt, slabBase64, slabMime }) {
   );
 
   if (!imagePart) {
-    throw new Error("Nano Banana Pro cevabında görsel inlineData bulunamadı.");
+    console.error(
+      "[Gemini] image inlineData bulunamadı. content:",
+      JSON.stringify(candidate.content, null, 2)
+    );
+    throw new Error("Gemini cevabında görsel inlineData bulunamadı.");
   }
 
   const imageBase64 = imagePart.inlineData.data;
   const mimeType = imagePart.inlineData.mimeType || "image/png";
 
+  console.log("[Gemini] Image generated, mimeType:", mimeType);
   return { imageBase64, mimeType };
 }
 
@@ -183,13 +186,14 @@ app.post("/api/design", async (req, res) => {
       : `${prompt}\n\nMaterial: premium Blue Jeans Marble, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
     ).trim();
 
-    // 4) Nano Banana Pro ile image+text → image
-    const { imageBase64, mimeType } = await generateWithNanoBananaPro({
+    // 4) Gemini 1.5 Flash ile image + text → image
+    const { imageBase64, mimeType } = await generateWithGeminiImage({
       prompt: enrichedPrompt,
       slabBase64,
       slabMime,
     });
 
+    console.log("[/api/design] SUCCESS – sending image to Wix");
     return res.json({
       ok: true,
       imageBase64,
@@ -205,7 +209,9 @@ app.post("/api/design", async (req, res) => {
     console.error("🔥 [/api/design] ERROR:", err);
     return res.status(500).json({
       ok: false,
-      error: err.message || "Nano Banana Pro isteği sırasında bir hata oluştu.",
+      error:
+        err.message ||
+        "Gemini (image) isteği sırasında beklenmeyen bir hata oluştu.",
     });
   }
 });
@@ -215,6 +221,6 @@ app.post("/api/design", async (req, res) => {
 // ----------------------
 app.listen(PORT, () => {
   console.log(
-    `🚀 BlueJeans Nano Banana Pro Engine listening on port ${PORT}`
+    `🚀 BlueJeans Gemini 1.5 Flash Engine listening on port ${PORT}`
   );
 });
