@@ -1,50 +1,53 @@
-// server.js  (TEST – resim indirme yok, sadece hattı test ediyoruz)
+// server.js — TEST MODE (gerçek AI yok, sadece demo image döner)
 
-const express = require('express');
-const cors = require('cors');
+const express = require("express");
+const cors = require("cors");
 
 const PORT = process.env.PORT || 10000;
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({ limit: "25mb" }));
 
-// Basit root endpoint (sağlık kontrolü)
-app.get('/', (req, res) => {
-  res.send('BlueJeans AI Design Engine is running 🧠🟦 (TEST MODE)');
+// Basit root test
+app.get("/", (req, res) => {
+  res.send("BlueJeans AI Design Engine is running 🧠🟦 (TEST MODE)");
 });
 
-// TEST ENDPOINT: /api/design
-app.post('/api/design', async (req, res) => {
+// Test endpoint
+app.post("/api/design", async (req, res) => {
   try {
-    console.log('✅ /api/design TEST endpoint hit. Body:', req.body);
 
     const { prompt, slabImageUrl, slabLabel } = req.body || {};
 
-    // Şimdilik sahte / demo bir sonuç döndürüyoruz
-    const mockResult = {
+    console.log("🟦 /api/design TEST endpoint hit. Body:", req.body);
+
+    // Bu DEMO GÖRSEL → sabit bir mutfak fotoğrafı
+    const demoImageUrl =
+      "https://images.pexels.com/photos/3735417/pexels-photo-3735417.jpeg";
+
+    return res.json({
       ok: true,
-      message: 'TEST DESIGN RESULT (no real image yet)',
+      demoImageUrl,         // 🔥 FRONTEND mutlaka bunu yakalayacak
+      imageUrl: null,       // gerçek render yok
+      imageBase64: null,    
+      mimeType: "image/jpeg",
+
       received: {
         prompt,
         slabImageUrl,
         slabLabel,
       },
-      demoImageUrl:
-        'https://images.pexels.com/photos/3735417/pexels-photo-3735417.jpeg',
-    };
 
-    res.json(mockResult);
+      message: "TEST DESIGN RESULT (no real image yet)",
+    });
+
   } catch (err) {
-    console.error('❌ /api/design TEST error:', err);
-    res
-      .status(500)
-      .json({ ok: false, error: err.message || String(err) });
+    console.error("❌ TEST MODE ERROR:", err);
+    return res.status(500).json({ ok: false, error: err.toString() });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(
-    `✅ BlueJeans AI Design Engine (TEST) listening on ${PORT}`
-  );
+  console.log(`🟦 BlueJeans AI Design Engine (TEST) listening on ${PORT}`);
 });
