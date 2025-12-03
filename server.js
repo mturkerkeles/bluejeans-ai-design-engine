@@ -1,43 +1,70 @@
+// Blue Jeans AI Design Engine — FULL IMAGE MODEL (Gemini 3 Pro Image Preview)
+
 import express from "express";
 import cors from "cors";
 import axios from "axios";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "30mb" }));
+app.use(express.json({ limit: "50mb" }));
 
-// YENİ MODEL → Gemini 3.0 Pro
-const MODEL_NAME = "gemini-3.0-pro";
+const PORT = process.env.PORT || 10000;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// Google AI client
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+// Google client
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// ------------------------------
-//   API /design (Wix çağırıyor)
-// ------------------------------
+// -------------------------------------------
+//  Convert wix:image:// → static.wixstatic.com
+// -------------------------------------------
+function normalizeWixUrl(url) {
+  if (!url.startsWith("wix:image://")) return url;
+
+  let cleaned = url
+    .replace("wix:image://v1/", "")
+    .split("/")[0]
+    .split("#")[0];
+
+  return `https://static.wixstatic.com/media/${cleaned}`;
+}
+
+// -------------------------------------------
+//  Download image → base64
+// -------------------------------------------
+async function downloadAsBase64(url) {
+  const res = await axios.get(url, { responseType: "arraybuffer" });
+  const buffer = Buffer.from(res.data, "binary");
+  return {
+    base64: buffer.toString("base64"),
+    mime: res.headers["content-type"] || "image/jpeg",
+  };
+}
+
+// -------------------------------------------
+//  MAIN ENDPOINT (Wix calls this)
+// -------------------------------------------
 app.post("/api/design", async (req, res) => {
-  console.log("📩 /api/design called with:", req.body);
-
   try {
     const { prompt, slabImageUrl, slabLabel } = req.body;
 
-    // -------- 1) Slab görselini indir --------
-    console.log("🔍 Downloading slab image from:", slabImageUrl);
+    if (!prompt || !slabImageUrl) {
+      return res.status(400).json({ ok: false, error: "Missing prompt or image" });
+    }
 
-    const rawImage = await axios.get(slabImageUrl, {
-      responseType: "arraybuffer"
+    // 1) Fix Wix URL
+    const downloadUrl = normalizeWixUrl(slabImageUrl);
+
+    // 2) Download slab image
+    const { base64, mime } = await downloadAsBase64(downloadUrl);
+
+    // 3) Gemini 3 Pro Image call
+    const model = genAI.getGenerativeModel({
+      model: "gemini-3-pro-image-preview",
     });
-    const base64Slab = Buffer.from(rawImage.data).toString("base64");
-    const mimeType = rawImage.headers["content-type"] || "image/jpeg";
-
-    // -------- 2) Gemini 3 Pro isteği --------
-    console.log("🤖 Sending request to Gemini 3.0 Pro...");
-
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
     const result = await model.generateContent({
       contents: [
@@ -45,58 +72,78 @@ app.post("/api/design", async (req, res) => {
           role: "user",
           parts: [
             {
-              text: `
-              You are an AI marble interior designer.
-              Use the provided Blue Jeans Marble slab image to generate a realistic interior render matching this prompt:
-              "${prompt}". 
-              Ensure the marble texture is applied naturally and consistently.
-              `
+              inlineData: {
+                mimeType: mime,
+                data: base64,
+              },
             },
             {
-              inlineData: {
-                mimeType,
-                data: base64Slab,
-              }
-            }
-          ]
-        }
-      ]
+              text: `
+You are an advanced interior design AI.
+Use the provided BLUE JEANS MARBLE slab as the PRIMARY MATERIAL.
+Generate a photorealistic interior render according to this prompt:
+
+"${prompt}"
+
+The design MUST use the slab visually and realistically.
+Slab: ${slabLabel || "Blue Jeans Marble"}
+
+Output ONLY the final rendered image.
+              `,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.7,
+        topP: 0.9,
+        topK: 32,
+        maxOutputTokens: 2048,
+      },
     });
 
-    // Görsel çıktıyı al
-    const imagePart = result.response.candidates[0].content.parts.find(
-      p => p.inlineData
-    );
-
-    if (!imagePart) {
-      throw new Error("No inlineData image returned");
+    // 4) Extract generated image
+    let generated;
+    try {
+      generated =
+        result.response.candidates[0].content.parts.find((p) => p.inlineData);
+    } catch (e) {
+      generated = null;
     }
 
-    const outMime = imagePart.inlineData.mimeType || "image/png";
-    const outBase64 = imagePart.inlineData.data;
+    if (!generated) {
+      return res.status(500).json({
+        ok: false,
+        error: "No image returned from Gemini 3 Pro Image Model",
+      });
+    }
+
+    const outMime = generated.inlineData.mimeType || "image/png";
+    const outB64 = generated.inlineData.data;
 
     return res.json({
       ok: true,
       mimeType: outMime,
-      imageBase64: outBase64,
-      received: { prompt, slabImageUrl, slabLabel }
+      imageBase64: outB64,
+      model: "gemini-3-pro-image-preview",
+      received: {
+        prompt,
+        slabImageUrl,
+        downloadUrl,
+        slabLabel,
+      },
     });
-  }
-
-  catch (err) {
+  } catch (err) {
     console.error("❌ /api/design ERROR:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err.message,
-    });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ------------------------------
-app.get("/", (req, res) => {
-  res.send("BlueJeans AI Design Engine (Gemini 3.0 Pro) is running.");
-});
+// -------------------------------------------
+app.get("/", (_, res) =>
+  res.send("BlueJeans AI Engine — Gemini 3 Pro Image Model Running ⚡️")
+);
 
-app.listen(10000, () => {
-  console.log("🚀 BlueJeans AI Design Engine (Gemini 3 Pro) listening on port 10000");
-});
+app.listen(PORT, () =>
+  console.log(`🔥 BlueJeans AI Engine listening on port ${PORT}`)
+);
