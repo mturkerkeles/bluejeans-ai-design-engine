@@ -1,4 +1,4 @@
-// server.js (TEST – Gemini yok, sadece boru hattını test ediyoruz)
+// server.js (TEST – resim indirme yok, sadece boru hattını test ediyoruz)
 const express = require("express");
 const cors = require("cors");
 
@@ -27,16 +27,16 @@ app.post("/api/design", async (req, res) => {
       });
     }
 
-    // Burada GERÇEK Gemini çağrısını yapmıyoruz.
-    // Sadece sahte bir cevap döndürüyoruz.
+    // 🔴 ÖNEMLİ: Burada fetch ile resmi İNDİRMİYORUZ.
+    // Sadece gelen URL'i ve prompt'u geri döndüren sahte bir cevap var.
     const fakeResult = {
       ok: true,
       promptUsed: prompt,
       slabLabel: slabLabel || "unknown",
       designSummary:
-        "TEST MODE: Gemini devre dışı, sadece boru hattını doğruluyoruz.",
+        "TEST MODE: Gemini ve resim işleme kapalı, sadece boru hattını doğruluyoruz.",
       suggestedUse:
-        "Bunu çalıştırabildiysen, Wix → Backend → Render hattı sorunsuz.",
+        "Bu cevabı Wix tarafında görebiliyorsan, Wix → Backend → Render hattı çalışıyor demektir.",
       echoImageUrl: slabImageUrl,
     };
 
