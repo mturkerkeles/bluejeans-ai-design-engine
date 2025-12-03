@@ -1,5 +1,5 @@
 // server.js
-// BlueJeans AI Design Engine – Imagen 4.0 backend (Render)
+// BlueJeans AI Design Engine – Nano Banana Pro (Gemini 3 Pro Image)
 
 // ----------------------
 // 1) IMPORTLAR
@@ -7,7 +7,8 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { GoogleGenAI } from "@google/genai";
+import fetch from "node-fetch";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -23,78 +24,117 @@ const GEMINI_API_KEY =
 if (!GEMINI_API_KEY) {
   console.error(
     "[FATAL] GEMINI_API_KEY ortam değişkeni tanımlı değil. " +
-      "Render Dashboard → Environment → GEMINI_API_KEY olarak eklemelisin."
+      "Lütfen Render Dashboard → Environment → GEMINI_API_KEY ekle."
   );
   process.exit(1);
 }
 
-// Google GenAI (Imagen 4.0) client
-const ai = new GoogleGenAI({
-  apiKey: GEMINI_API_KEY,
-});
+// 🔑 Google Gemini / Nano Banana client
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+// Nano Banana Pro = Gemini 3 Pro Image preview modeli  [oai_citation:1‡Google AI for Developers](https://ai.google.dev/gemini-api/docs/image-generation?utm_source=chatgpt.com)
+const MODEL_NAME = "gemini-3-pro-image-preview";
 
 // ----------------------
 // 3) EXPRESS APP
 // ----------------------
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "20mb" }));
 
 // Basit health-check
 app.get("/", (req, res) => {
-  res.send("BlueJeans AI Design Engine (Imagen 4.0) is running 🧠🟦");
+  res.send("BlueJeans Nano Banana Pro Engine is running 🧠🍌");
 });
 
 // ----------------------
-// 4) HELPER: Imagen 4 ile görsel üret
+// 4) Wix URL → gerçek HTTPS URL
 // ----------------------
-async function generateImagen4Image(prompt) {
-  console.log("[Imagen4] Prompt:", prompt);
+function wixToHttps(wixUrl) {
+  // Örn: wix:image://v1/xxxxx~mv2.jpg/...
+  if (!wixUrl.startsWith("wix:image://")) return wixUrl;
 
-  // Imagen 4.0 için resmi dokümandan birebir örnek  [oai_citation:1‡Google AI for Developers](https://ai.google.dev/gemini-api/docs/imagen)
-  const response = await ai.models.generateImages({
-    model: "imagen-4.0-generate-001",
-    prompt,
-    config: {
-      numberOfImages: 1,
-      // İstersen burada ayarları genişletiriz:
-      // aspectRatio: "4:3",
-      // imageSize: "1K",
-      // personGeneration: "dont_allow",
-    },
-  });
+  const parts = wixUrl.split("/");
+  const last = parts[parts.length - 1]; // xxxxx~mv2.jpg
+  const id = last.split("~")[0];        // xxxxx
 
-  if (
-    !response ||
-    !response.generatedImages ||
-    response.generatedImages.length === 0
-  ) {
-    throw new Error("Imagen 4 hiçbir görsel döndürmedi.");
-  }
-
-  const img = response.generatedImages[0];
-  if (!img.image || !img.image.imageBytes) {
-    throw new Error("Imagen 4 cevabında imageBytes bulunamadı.");
-  }
-
-  const base64 = img.image.imageBytes; // Zaten base64 string
-  return {
-    imageBase64: base64,
-    mimeType: "image/png", // Imagen PNG üretiyor, istersen ayarlarız
-  };
+  return `https://static.wixstatic.com/media/${id}`;
 }
 
 // ----------------------
-// 5) ANA ENDPOINT: /generate
+// 5) Slab resmini indir → base64
 // ----------------------
-app.post("/generate", async (req, res) => {
+async function downloadImageToBase64(url) {
+  console.log("⬇️ Slab image download URL:", url);
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(
+      `Slab image download failed: ${resp.status} ${resp.statusText}`
+    );
+  }
+  const arrayBuf = await resp.arrayBuffer();
+  const base64 = Buffer.from(arrayBuf).toString("base64");
+  const mimeType = resp.headers.get("content-type") || "image/jpeg";
+  return { base64, mimeType };
+}
+
+// ----------------------
+// 6) Nano Banana Pro ile IMAGE + TEXT → IMAGE
+// ----------------------
+async function generateWithNanoBananaPro({ prompt, slabBase64, slabMime }) {
+  console.log("[NanoBananaPro] Prompt:", prompt);
+
+  const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+
+  // Gemini image generation docs: image + text birlikte parts içinde gönderilebilir  [oai_citation:2‡Google AI for Developers](https://ai.google.dev/gemini-api/docs/image-generation?utm_source=chatgpt.com)
+  const result = await model.generateContent({
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: prompt,
+          },
+          slabBase64 && slabMime
+            ? {
+                inlineData: {
+                  mimeType: slabMime,
+                  data: slabBase64,
+                },
+              }
+            : null,
+        ].filter(Boolean),
+      },
+    ],
+  });
+
+  const candidate = result?.response?.candidates?.[0];
+  if (!candidate || !candidate.content || !candidate.content.parts) {
+    throw new Error("Nano Banana Pro boş response döndürdü.");
+  }
+
+  // parts içinde inlineData olan kısmı bul
+  const imagePart = candidate.content.parts.find(
+    (p) => p.inlineData && p.inlineData.data
+  );
+
+  if (!imagePart) {
+    throw new Error("Nano Banana Pro cevabında görsel inlineData bulunamadı.");
+  }
+
+  const imageBase64 = imagePart.inlineData.data;
+  const mimeType = imagePart.inlineData.mimeType || "image/png";
+
+  return { imageBase64, mimeType };
+}
+
+// ----------------------
+// 7) ANA ENDPOINT: /api/design
+// ----------------------
+app.post("/api/design", async (req, res) => {
   const { prompt, slabImageUrl, slabLabel } = req.body || {};
 
-  console.log("[/generate] Request body:", {
-    prompt,
-    slabImageUrl,
-    slabLabel,
-  });
+  console.log("📥 [/api/design] Body:", { prompt, slabImageUrl, slabLabel });
 
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
     return res.status(400).json({
@@ -103,21 +143,39 @@ app.post("/generate", async (req, res) => {
     });
   }
 
-  try {
-    // 🔵 Şu an Imagen 4 Node.js API'si yalnızca text prompt destekliyor.
-    // slabImageUrl'i ileride referans-image desteği geldiğinde kullanacağız.
-    // Şimdilik prompt'un içine slab bilgisi ekleyip modelin "Blue Jeans Marble slab" ruhunu taşımasını sağlarız.
-    const enrichedPrompt = slabLabel
-      ? `${prompt}\n\nMaterial: premium Blue Jeans Marble ${slabLabel}, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
-      : `${prompt}\n\nMaterial: premium Blue Jeans Marble, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`;
+  if (!slabImageUrl) {
+    return res.status(400).json({
+      ok: false,
+      error: "slabImageUrl eksik. Lütfen önce bir slab seç.",
+    });
+  }
 
-    const { imageBase64, mimeType } = await generateImagen4Image(enrichedPrompt);
+  try {
+    // 1) Wix URL → static HTTPS
+    const httpsUrl = wixToHttps(slabImageUrl);
+
+    // 2) Slab'i indir → base64
+    const { base64: slabBase64, mimeType: slabMime } =
+      await downloadImageToBase64(httpsUrl);
+
+    // 3) Blue Jeans Marble vurgusunu prompt'a zenginleştir
+    const enrichedPrompt = (slabLabel
+      ? `${prompt}\n\nMaterial: premium Blue Jeans Marble ${slabLabel}, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
+      : `${prompt}\n\nMaterial: premium Blue Jeans Marble, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
+    ).trim();
+
+    // 4) Nano Banana Pro ile image+text → image
+    const { imageBase64, mimeType } = await generateWithNanoBananaPro({
+      prompt: enrichedPrompt,
+      slabBase64,
+      slabMime,
+    });
 
     return res.json({
       ok: true,
       imageBase64,
       mimeType,
-      usedModel: "imagen-4.0-generate-001",
+      model: MODEL_NAME,
       received: {
         prompt,
         slabImageUrl,
@@ -125,18 +183,19 @@ app.post("/generate", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("[/generate] ERROR:", err);
-
+    console.error("🔥 [/api/design] ERROR:", err);
     return res.status(500).json({
       ok: false,
-      error: err.message || "Imagen 4 isteği sırasında beklenmeyen bir hata oluştu.",
+      error: err.message || "Nano Banana Pro isteği sırasında bir hata oluştu.",
     });
   }
 });
 
 // ----------------------
-// 6) SERVER’I BAŞLAT
+// 8) SERVER’I BAŞLAT
 // ----------------------
 app.listen(PORT, () => {
-  console.log(`BlueJeans AI Design Engine (Imagen 4.0) listening on port ${PORT}`);
+  console.log(
+    `🚀 BlueJeans Nano Banana Pro Engine listening on port ${PORT}`
+  );
 });
