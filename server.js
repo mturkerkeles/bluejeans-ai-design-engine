@@ -1,6 +1,7 @@
 // server.js
 // BlueJeans AI Design Lab – Gemini 3 Pro Image (Nano Banana Pro) backend
 // IMAGE + TEXT → IMAGE with advanced Blue Jeans Marble pre-prompt
+// CRITICAL FIX: 5-Minute Timeouts to prevent Render 504 Errors
 
 import express from "express";
 import cors from "cors";
@@ -28,8 +29,7 @@ if (!GEMINI_API_KEY) {
   process.exit(1);
 }
 
-// 🛑 MODEL CHANGE: Upgraded to Gemini 3 Pro Image (Nano Banana Pro) for 
-// maximum photorealism and control. This is the official preview model name.
+// 🛑 MODEL CHANGE: Upgraded to Gemini 3 Pro Image
 const MODEL_NAME = "gemini-3-pro-image-preview";
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -43,7 +43,7 @@ app.use(cors());
 app.use(express.json({ limit: "20mb" })); 
 
 app.get("/", (_req, res) => {
-  res.send("BlueJeans **Gemini 3 Pro Image Engine** (Nano Banana Pro) is running 🧠🟦");
+  res.send("BlueJeans **Gemini 3 Pro Image Engine** is running 🧠🟦");
 });
 
 // ----------------------
@@ -92,13 +92,6 @@ async function downloadImageToBase64(url) {
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    console.error(
-      "[downloadImageToBase64] HTTP error:",
-      resp.status,
-      resp.statusText,
-      "Body snippet:",
-      text?.slice(0, 300)
-    );
     throw new Error(
       `Slab image download failed: ${resp.status} ${resp.statusText}`
     );
@@ -112,21 +105,20 @@ async function downloadImageToBase64(url) {
 }
 
 // ----------------------
-// 5) Helper: Gemini 3 Pro Image – image+text → image
+// 5) Helper: Gemini 3 Pro Image Generation
 // ----------------------
 async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
-  console.log("[Gemini3ProImage] Final prompt sent to model:", prompt);
+  console.log("[Gemini3Pro] Final prompt sent to model:", prompt);
 
   const model = genAI.getGenerativeModel({
     model: MODEL_NAME,
   });
 
-  // 🛑 FIX 1: Increase the Gemini API client timeout
+  // 🛑 FIX 1: Increase Gemini API Client Timeout (5 Minutes)
   const requestOptions = {
-    timeout: 180000, // 3 minutes
+    timeout: 300000, 
   };
 
-  // We send both the slab image and the textual instructions together.
   const result = await model.generateContent({
     contents: [
       {
@@ -159,17 +151,12 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
   );
 
   if (!imagePart) {
-    console.error(
-      "[Gemini3ProImage] Full candidate parts (no inlineData found):",
-      candidate.content.parts
-    );
+    console.error("[Gemini3Pro] No inlineData found:", candidate.content.parts);
     const textPart = candidate.content.parts.find((p) => p.text);
     const errorDetail = textPart
-      ? `Model returned only text (check prompt content): "${textPart.text.substring(0, 100)}..."`
+      ? `Model returned only text: "${textPart.text.substring(0, 100)}..."`
       : "Response does not contain inline image data.";
-    throw new Error(
-      `Image generation failed. ${errorDetail}`
-    );
+    throw new Error(`Image generation failed. ${errorDetail}`);
   }
 
   const imageBase64 = imagePart.inlineData.data;
@@ -182,26 +169,18 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
 // 6) MAIN ENDPOINT: /api/design
 // ----------------------
 app.post("/api/design", async (req, res) => {
-  // 🛑 FIX 2: Set SERVER timeout high to prevent Render 504 Gateway errors
-  // This tells the Node server to keep the connection open for 3 minutes
-  req.setTimeout(180000); 
+  // 🛑 FIX 2: Set Request-Specific Timeout (5 Minutes)
+  req.setTimeout(300000); 
 
   const { prompt, slabImageUrl, slabLabel } = req.body || {};
-
   console.log("📥 [/api/design] Body:", { prompt, slabImageUrl, slabLabel });
 
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
-    return res.status(400).json({
-      ok: false,
-      error: "Prompt cannot be empty.",
-    });
+    return res.status(400).json({ ok: false, error: "Prompt cannot be empty." });
   }
 
   if (!slabImageUrl) {
-    return res.status(400).json({
-      ok: false,
-      error: "slabImageUrl is missing. Please select a slab first.",
-    });
+    return res.status(400).json({ ok: false, error: "slabImageUrl is missing." });
   }
 
   try {
@@ -216,42 +195,26 @@ app.post("/api/design", async (req, res) => {
       await downloadImageToBase64(httpsUrl);
 
     // 3) ADVANCED BLUE JEANS MARBLE PRE-PROMPT ENGINE
-
-    // (A) Global rendering style
     const baseStyle = `
 You are an expert architectural visualization and CGI renderer.
-Generate an ultra-photorealistic, high-resolution (4K or higher) interior or exterior scene with an **aspect ratio of 16:9** (cinematic architectural style).
+Generate an ultra-photorealistic, high-resolution (8K) interior or exterior scene with an **aspect ratio of 16:9**.
 Use physically based rendering (PBR), realistic global illumination, soft natural or architectural lighting,
 accurate shadows and reflections, and cinematic composition at human eye level.
 **Ensure the lighting accurately highlights the unique characteristics and luster of the stone.**
 Do not generate any text, watermarks, UI elements, or logos in the image.
     `.trim();
 
-    // (B) Blue Jeans Marble material focus
-    const materialBlock = slabLabel
-      ? `
-The core material is premium Blue Jeans Marble ${slabLabel}, a quarry-origin exotic dolomitic marble from Erzurum, Turkey.
+    const materialBlock = `
+The core material is premium Blue Jeans Marble ${slabLabel || ""}, a quarry-origin exotic dolomitic marble from Erzurum, Turkey.
 The generated scene must preserve the texture and pattern of the uploaded slab image: deep denim-blue tones,
 dramatic veining with bronze and white accents, and a fine crystalline structure.
 Use this slab image as the authoritative reference for color, veining direction and pattern density.
-Apply this Blue Jeans Marble to the key surfaces described by the user (for example: countertops, kitchen islands,
-bathroom vanities, shower walls, feature walls, flooring, fireplaces, or reception desks).
+Apply this Blue Jeans Marble to the key surfaces described by the user.
 The stone surface should appear highly polished with realistic reflections and subtle light bloom, without exaggeration.
-      `.trim()
-      : `
-The core material is premium Blue Jeans Marble, a quarry-origin exotic dolomitic marble from Erzurum, Turkey.
-The generated scene must preserve the texture and pattern of the uploaded slab image: deep denim-blue tones,
-dramatic veining with bronze and white accents, and a fine crystalline structure.
-Use this slab image as the authoritative reference for color, veining direction and pattern density.
-Apply this Blue Jeans Marble to the key surfaces described by the user (for example: countertops, kitchen islands,
-bathroom vanities, shower walls, feature walls, flooring, fireplaces, or reception desks).
-The stone surface should appear highly polished with realistic reflections and subtle light bloom, without exaggeration.
-      `.trim();
+    `.trim();
 
-    // (C) User request
     const userBlock = `USER PROMPT: ${prompt}`;
 
-    // Final combined prompt
     const finalPrompt = `
 ${baseStyle}
 
@@ -285,9 +248,7 @@ ${userBlock}
     console.error("🔥 [/api/design] ERROR:", err);
     return res.status(500).json({
       ok: false,
-      error:
-        err.message ||
-        "Gemini 3 Pro Image request failed with an unexpected error. Please try again.",
+      error: err.message || "Gemini request failed. Please try again.",
     });
   }
 });
@@ -295,8 +256,14 @@ ${userBlock}
 // ----------------------
 // 7) START SERVER
 // ----------------------
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(
     `🚀 BlueJeans **Gemini 3 Pro Image Engine** (Nano Banana Pro) listening on port ${PORT}`
   );
 });
+
+// 🛑 FIX 3: Global Server Timeouts (Critical for Render 504 Errors)
+// Forces the server to keep the connection open for 5 minutes (300,000 ms)
+server.setTimeout(300000);
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 120000;
