@@ -1,5 +1,5 @@
 // server.js
-// BlueJeans AI Design Engine – Nano Banana Pro (Gemini 3 Pro Image)
+// BlueJeans AI Design Engine – Nano Banana Pro (Gemini 3 Image Preview)
 
 // ----------------------
 // 1) IMPORTLAR
@@ -16,7 +16,6 @@ dotenv.config();
 // 2) ENV KONTROLLERİ
 // ----------------------
 const PORT = process.env.PORT || 8080;
-
 const GEMINI_API_KEY =
   process.env.GEMINI_API_KEY ||
   process.env.GOOGLE_API_KEY ||
@@ -33,9 +32,9 @@ if (!GEMINI_API_KEY) {
 // 🔑 Google Gemini / Nano Banana client
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// Nano Banana Pro model adı
-// (gerekirse burada güncelleriz; şimdilik blog’da geçen preview adı)
-const MODEL_NAME = "gemini-3-pro-image-preview";
+// Nano Banana Pro = Gemini 3 Image preview modeli
+// NOT: İleride model adı değişirse sadece burayı güncelleriz.
+const MODEL_NAME = "gemini-1.5-flash-002"; // ya da dokümana göre güncel image destekli model
 
 // ----------------------
 // 3) EXPRESS APP
@@ -50,34 +49,40 @@ app.get("/", (req, res) => {
 });
 
 // ----------------------
-// 4) Wix URL → gerçek HTTPS URL (YENİ SÜRÜM – 403 FIX)
+// 4) Wix URL → gerçek HTTPS URL + ?raw=1
 // ----------------------
+//
+// ÖRNEK WIX URL:
+//  wix:image://v1/2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg/blue-jeans-slab_lot-802.jpg#originWidth=1600&originHeight=1200
+//
+// Bizim istediğimiz MEDIA TOKEN:
+//  2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg
+//
+// Ve sonunda ulaşmak istediğimiz URL:
+//  https://static.wixstatic.com/media/2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg?raw=1
+//
 function wixToHttps(wixUrl) {
-  if (!wixUrl.startsWith("wix:image://")) return wixUrl;
+  if (!wixUrl || typeof wixUrl !== "string") return wixUrl;
 
-  // Örn:
-  // wix:image://v1/2e3f8a_edf394df10ed48cd9e77420bb7f920c7~mv2.jpg/blue-jeans-1_-lot-2490.jpg#originWidth=2228&originHeight=1350
-
-  // 1) "wix:image://v1/" kısmını temizle
-  const clean = wixUrl.replace("wix:image://v1/", "");
-
-  // 2) İlk parça ID, ikinci parça gerçek dosya adı
-  const parts = clean.split("/");
-  const id = parts[0]; // 2e3f8a_edf39.....~mv2.jpg
-  const filenameWithHash = parts[1] || "";
-  const filename = filenameWithHash.split("#")[0]; // blue-jeans-1_-lot-2490.jpg
-
-  // Sadece ID varsa (eski format), en azından bu URL çalışır
-  if (!filename) {
-    const url = `https://static.wixstatic.com/media/${id}`;
-    console.log("[wixToHttps] old-style URL →", url);
-    return url;
+  if (!wixUrl.startsWith("wix:image://")) {
+    // Zaten normal https ise dokunma
+    return wixUrl;
   }
 
-  // Yeni doğru format:
-  const url = `https://static.wixstatic.com/media/${id}/${filename}`;
-  console.log("[wixToHttps] wix:image →", url);
-  return url;
+  // wix:image://v1/<MEDIA_TOKEN>/...
+  const match = wixUrl.match(/wix:image:\/\/v1\/([^/]+)\//);
+  if (!match || !match[1]) {
+    console.warn("[wixToHttps] Beklenmeyen wix:image formatı:", wixUrl);
+    return wixUrl;
+  }
+
+  const mediaToken = match[1]; // 2e3f8a_008affd73da44d5c918dd3fe197c04b7~mv2.jpg
+
+  // ?raw=1 ile birlikte statik URL
+  const httpsUrl = `https://static.wixstatic.com/media/${mediaToken}?raw=1`;
+
+  console.log("[wixToHttps] wix:image →", httpsUrl);
+  return httpsUrl;
 }
 
 // ----------------------
@@ -91,8 +96,10 @@ async function downloadImageToBase64(url) {
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     console.error(
-      `❌ Slab image download failed: ${resp.status} ${resp.statusText}`,
-      text ? `\nResponse body: ${text}` : ""
+      `[downloadImageToBase64] HTTP ${resp.status} ${resp.statusText}, body: ${text?.slice(
+        0,
+        300
+      )}`
     );
     throw new Error(
       `Slab image download failed: ${resp.status} ${resp.statusText}`
@@ -114,29 +121,34 @@ async function generateWithNanoBananaPro({ prompt, slabBase64, slabMime }) {
 
   const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-  // Gemini image generation: image + text birlikte parts içinde gönderilir
+  // IMAGE + TEXT birlikte gönderiyoruz
+  const parts = [
+    {
+      text: prompt,
+    },
+  ];
+
+  if (slabBase64 && slabMime) {
+    parts.push({
+      inlineData: {
+        mimeType: slabMime,
+        data: slabBase64,
+      },
+    });
+  }
+
   const result = await model.generateContent({
     contents: [
       {
         role: "user",
-        parts: [
-          { text: prompt },
-          slabBase64 && slabMime
-            ? {
-                inlineData: {
-                  mimeType: slabMime,
-                  data: slabBase64,
-                },
-              }
-            : null,
-        ].filter(Boolean),
+        parts,
       },
     ],
   });
 
   const candidate = result?.response?.candidates?.[0];
   if (!candidate || !candidate.content || !candidate.content.parts) {
-    console.error("[NanoBananaPro] Empty response:", result);
+    console.error("[NanoBananaPro] Boş veya eksik response:", result);
     throw new Error("Nano Banana Pro boş response döndürdü.");
   }
 
@@ -146,7 +158,10 @@ async function generateWithNanoBananaPro({ prompt, slabBase64, slabMime }) {
   );
 
   if (!imagePart) {
-    console.error("[NanoBananaPro] No inlineData in parts:", candidate.content);
+    console.error(
+      "[NanoBananaPro] inlineData içeren part bulunamadı. Response:",
+      candidate.content.parts
+    );
     throw new Error("Nano Banana Pro cevabında görsel inlineData bulunamadı.");
   }
 
@@ -179,7 +194,7 @@ app.post("/api/design", async (req, res) => {
   }
 
   try {
-    // 1) Wix URL → static HTTPS
+    // 1) Wix URL → static HTTPS + ?raw=1
     const httpsUrl = wixToHttps(slabImageUrl);
 
     // 2) Slab'i indir → base64
@@ -212,7 +227,6 @@ app.post("/api/design", async (req, res) => {
     });
   } catch (err) {
     console.error("🔥 [/api/design] ERROR:", err);
-
     return res.status(500).json({
       ok: false,
       error:
