@@ -1,6 +1,7 @@
-// ----------------------
-// 1) IMPORTS
-// ----------------------
+// server.js
+// BlueJeans AI Design Lab – Gemini 2.5 Flash Image (Nano Banana) backend
+// IMAGE + TEXT → IMAGE with advanced Blue Jeans Marble pre-prompt
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -10,7 +11,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 dotenv.config();
 
 // ----------------------
-// 2) ENV + GEMINI CLIENT
+// 1) ENV + GEMINI CLIENT
 // ----------------------
 const PORT = process.env.PORT || 8080;
 
@@ -27,13 +28,13 @@ if (!GEMINI_API_KEY) {
   process.exit(1);
 }
 
-// Nano Banana (Image-to-Image) official model name:
+// Official Nano Banana (Image-to-Image) model:
 const MODEL_NAME = "gemini-2.5-flash-image";
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 // ----------------------
-// 3) EXPRESS APP
+// 2) EXPRESS APP
 // ----------------------
 const app = express();
 app.use(cors());
@@ -44,7 +45,7 @@ app.get("/", (_req, res) => {
 });
 
 // ----------------------
-// 4) Helper: Wix URL → static.wixstatic.com
+// 3) Helper: Wix URL → static.wixstatic.com
 // ----------------------
 function wixToHttps(wixUrl) {
   try {
@@ -70,8 +71,7 @@ function wixToHttps(wixUrl) {
         ? withoutPrefix
         : withoutPrefix.slice(0, firstSlashIdx); // e.g. 2e3f8a_00...~mv2.jpg
 
-    // In practice Wix already includes extension (.jpg / .png)
-    const mediaId = idWithExt; // no extra split needed, ID+ext is fine
+    const mediaId = idWithExt; // already includes extension
 
     const httpsUrl = `https://static.wixstatic.com/media/${mediaId}?raw=1`;
     console.log("[wixToHttps] wix:image →", httpsUrl);
@@ -83,7 +83,7 @@ function wixToHttps(wixUrl) {
 }
 
 // ----------------------
-// 5) Helper: download image → base64
+// 4) Helper: download image → base64
 // ----------------------
 async function downloadImageToBase64(url) {
   console.log("⬇️ Slab image download URL:", url);
@@ -112,10 +112,10 @@ async function downloadImageToBase64(url) {
 }
 
 // ----------------------
-// 6) Helper: Gemini 2.5 Flash Image – image+text → image
+// 5) Helper: Gemini 2.5 Flash Image – image+text → image
 // ----------------------
 async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
-  console.log("[GeminiFlashImage] Prompt:", prompt);
+  console.log("[GeminiFlashImage] Final prompt sent to model:", prompt);
 
   const model = genAI.getGenerativeModel({
     model: MODEL_NAME,
@@ -128,7 +128,6 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
       {
         role: "user",
         parts: [
-          // slab image
           slabBase64 && slabMime
             ? {
                 inlineData: {
@@ -137,7 +136,6 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
                 },
               }
             : null,
-          // text prompt
           {
             text: prompt,
           },
@@ -173,7 +171,7 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
 }
 
 // ----------------------
-// 7) MAIN ENDPOINT: /api/design
+// 6) MAIN ENDPOINT: /api/design
 // ----------------------
 app.post("/api/design", async (req, res) => {
   const { prompt, slabImageUrl, slabLabel } = req.body || {};
@@ -205,16 +203,55 @@ app.post("/api/design", async (req, res) => {
     const { base64: slabBase64, mimeType: slabMime } =
       await downloadImageToBase64(httpsUrl);
 
-    // 3) Enrich prompt with Blue Jeans Marble story
-    const enrichedPrompt = (
-      slabLabel
-        ? `${prompt}\n\nMaterial: premium Blue Jeans Marble ${slabLabel}, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
-        : `${prompt}\n\nMaterial: premium Blue Jeans Marble, dramatic denim-blue veining with bronze accents, ultra realistic interior rendering, 4K quality.`
-    ).trim();
+    // 3) ADVANCED BLUE JEANS MARBLE PRE-PROMPT ENGINE
 
-    // 4) Call Gemini 2.5 Flash Image (Nano Banana) – image+text → image
+    // (A) Global rendering style
+    const baseStyle = `
+You are an expert architectural visualization and CGI renderer.
+Generate an ultra-photorealistic, high-resolution (4K or higher) interior or exterior scene.
+Use physically based rendering (PBR), realistic global illumination, soft natural or architectural lighting,
+accurate shadows and reflections, and cinematic composition at human eye level.
+Do not generate any text, watermarks, UI elements, or logos in the image.
+    `.trim();
+
+    // (B) Blue Jeans Marble material focus
+    const materialBlock = slabLabel
+      ? `
+The core material is premium Blue Jeans Marble ${slabLabel}, a quarry-origin exotic dolomitic marble from Erzurum, Turkey.
+The generated scene must preserve the texture and pattern of the uploaded slab image: deep denim-blue tones,
+dramatic veining with bronze and white accents, and a fine crystalline structure.
+Use this slab image as the authoritative reference for color, veining direction and pattern density.
+Apply this Blue Jeans Marble to the key surfaces described by the user (for example: countertops, kitchen islands,
+bathroom vanities, shower walls, feature walls, flooring, fireplaces, or reception desks).
+The stone surface should appear highly polished with realistic reflections and subtle light bloom, without exaggeration.
+      `.trim()
+      : `
+The core material is premium Blue Jeans Marble, a quarry-origin exotic dolomitic marble from Erzurum, Turkey.
+The generated scene must preserve the texture and pattern of the uploaded slab image: deep denim-blue tones,
+dramatic veining with bronze and white accents, and a fine crystalline structure.
+Use this slab image as the authoritative reference for color, veining direction and pattern density.
+Apply this Blue Jeans Marble to the key surfaces described by the user (for example: countertops, kitchen islands,
+bathroom vanities, shower walls, feature walls, flooring, fireplaces, or reception desks).
+The stone surface should appear highly polished with realistic reflections and subtle light bloom, without exaggeration.
+      `.trim();
+
+    // (C) User request
+    const userBlock = `USER PROMPT: ${prompt}`;
+
+    // Final combined prompt
+    const finalPrompt = `
+${baseStyle}
+
+${materialBlock}
+
+Now follow the user request exactly and compose the best possible scene:
+
+${userBlock}
+    `.trim();
+
+    // 4) Call Gemini 2.5 Flash Image – image+text → image
     const { imageBase64, mimeType } = await generateWithGeminiFlashImage({
-      prompt: enrichedPrompt,
+      prompt: finalPrompt,
       slabBase64,
       slabMime,
     });
@@ -242,7 +279,7 @@ app.post("/api/design", async (req, res) => {
 });
 
 // ----------------------
-// 8) START SERVER
+// 7) START SERVER
 // ----------------------
 app.listen(PORT, () => {
   console.log(
