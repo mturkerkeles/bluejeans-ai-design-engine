@@ -1,17 +1,20 @@
 {
-  "name": "bluejeans-gemini-image-engine",
+  "name": "bluejeans-gemini-engine",
   "version": "1.0.0",
-  "description": "BlueJeans AI Design Engine (Gemini 1.5 Flash)",
+  "description": "BlueJeans AI Design Engine (Gemini 2.5 Flash Image)",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.11.0",
+    "@google/generative-ai": "^0.5.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.0",
-    "express": "^4.19.0",
-    "node-fetch": "^3.3.2"
+    "dotenv": "^16.4.1",
+    "express": "^4.19.2",
+    "node-fetch": "^2.6.7"
+  },
+  "engines": {
+    "node": ">=18 <=23"
   }
 }
