@@ -1,7 +1,6 @@
 // server.js
 // BlueJeans AI Design Lab – Gemini 3 Pro Image (Nano Banana Pro) backend
-// IMAGE + TEXT → IMAGE with advanced Blue Jeans Marble pre-prompt
-// CRITICAL FIX: 5-Minute Timeouts to prevent Render 504 Errors
+// TAM GÜNCEL SÜRÜM: 5 Dakika Timeout + Doku Sadakati (Texture Fidelity)
 
 import express from "express";
 import cors from "cors";
@@ -29,7 +28,7 @@ if (!GEMINI_API_KEY) {
   process.exit(1);
 }
 
-// 🛑 MODEL CHANGE: Upgraded to Gemini 3 Pro Image
+// 🛑 MODEL: Gemini 3 Pro Image (En Yüksek Kalite)
 const MODEL_NAME = "gemini-3-pro-image-preview";
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -39,11 +38,11 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // ----------------------
 const app = express();
 app.use(cors());
-// Set a generous body size limit for large base64 slab images
+// Büyük resimler için limit 20mb
 app.use(express.json({ limit: "20mb" })); 
 
 app.get("/", (_req, res) => {
-  res.send("BlueJeans **Gemini 3 Pro Image Engine** is running 🧠🟦");
+  res.send("BlueJeans **Gemini 3 Pro Image Engine** (High Fidelity) is running 🧠🟦");
 });
 
 // ----------------------
@@ -52,30 +51,13 @@ app.get("/", (_req, res) => {
 function wixToHttps(wixUrl) {
   try {
     if (!wixUrl || typeof wixUrl !== "string") return null;
-
-    // If it's already https, just return
-    if (wixUrl.startsWith("http://") || wixUrl.startsWith("https://")) {
-      return wixUrl;
-    }
-
-    // Expected form: wix:image://v1/...
-    if (!wixUrl.startsWith("wix:image://")) {
-      console.warn("[wixToHttps] Unknown URL format:", wixUrl);
-      return null;
-    }
+    if (wixUrl.startsWith("http://") || wixUrl.startsWith("https://")) return wixUrl;
+    if (!wixUrl.startsWith("wix:image://")) return null;
 
     const withoutPrefix = wixUrl.replace("wix:image://v1/", "");
     const firstSlashIdx = withoutPrefix.indexOf("/");
-
-    const idWithExt =
-      firstSlashIdx === -1
-        ? withoutPrefix
-        : withoutPrefix.slice(0, firstSlashIdx); 
-
-    const mediaId = idWithExt; 
-    const httpsUrl = `https://static.wixstatic.com/media/${mediaId}?raw=1`;
-    console.log("[wixToHttps] wix:image →", httpsUrl);
-    return httpsUrl;
+    const idWithExt = firstSlashIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, firstSlashIdx); 
+    return `https://static.wixstatic.com/media/${idWithExt}?raw=1`;
   } catch (err) {
     console.error("[wixToHttps] ERROR:", err);
     return null;
@@ -83,24 +65,18 @@ function wixToHttps(wixUrl) {
 }
 
 // ----------------------
-// 4) Helper: download image → base64
+// 4) Helper: Resim İndir → base64
 // ----------------------
 async function downloadImageToBase64(url) {
   console.log("⬇️ Slab image download URL:", url);
-
   const resp = await fetch(url);
-
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(
-      `Slab image download failed: ${resp.status} ${resp.statusText}`
-    );
+    throw new Error(`Slab image download failed: ${resp.status} ${resp.statusText}`);
   }
-
   const arrayBuf = await resp.arrayBuffer();
   const base64 = Buffer.from(arrayBuf).toString("base64");
   const mimeType = resp.headers.get("content-type") || "image/jpeg";
-
   return { base64, mimeType };
 }
 
@@ -108,13 +84,13 @@ async function downloadImageToBase64(url) {
 // 5) Helper: Gemini 3 Pro Image Generation
 // ----------------------
 async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
-  console.log("[Gemini3Pro] Final prompt sent to model:", prompt);
+  console.log("[Gemini3Pro] Generating with 5-minute timeout & High Fidelity...");
 
   const model = genAI.getGenerativeModel({
     model: MODEL_NAME,
   });
 
-  // 🛑 FIX 1: Increase Gemini API Client Timeout (5 Minutes)
+  // 🛑 FIX 1: API Timeout 5 Dakika (300.000 ms)
   const requestOptions = {
     timeout: 300000, 
   };
@@ -145,13 +121,12 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
     throw new Error("Gemini 3 Pro Image returned an empty response.");
   }
 
-  // Find the part that contains image data
   const imagePart = candidate.content.parts.find(
     (p) => p.inlineData && p.inlineData.data
   );
 
   if (!imagePart) {
-    console.error("[Gemini3Pro] No inlineData found:", candidate.content.parts);
+    console.error("[Gemini3Pro] Full response parts:", candidate.content.parts);
     const textPart = candidate.content.parts.find((p) => p.text);
     const errorDetail = textPart
       ? `Model returned only text: "${textPart.text.substring(0, 100)}..."`
@@ -169,7 +144,7 @@ async function generateWithGeminiFlashImage({ prompt, slabBase64, slabMime }) {
 // 6) MAIN ENDPOINT: /api/design
 // ----------------------
 app.post("/api/design", async (req, res) => {
-  // 🛑 FIX 2: Set Request-Specific Timeout (5 Minutes)
+  // 🛑 FIX 2: İstek Bazlı Timeout (5 Dakika) - Render 504 hatasını önler
   req.setTimeout(300000); 
 
   const { prompt, slabImageUrl, slabLabel } = req.body || {};
@@ -184,55 +159,53 @@ app.post("/api/design", async (req, res) => {
   }
 
   try {
-    // 1) Convert Wix URL → https
     const httpsUrl = wixToHttps(slabImageUrl);
     if (!httpsUrl) {
       throw new Error("Could not convert slabImageUrl to a valid https URL.");
     }
 
-    // 2) Download slab to base64
     const { base64: slabBase64, mimeType: slabMime } =
       await downloadImageToBase64(httpsUrl);
 
-    // 3) ADVANCED BLUE JEANS MARBLE PRE-PROMPT ENGINE
-    const baseStyle = `
-You are an expert architectural visualization and CGI renderer.
-Generate an ultra-photorealistic, high-resolution (8K) interior or exterior scene with an **aspect ratio of 16:9**.
-Use physically based rendering (PBR), realistic global illumination, soft natural or architectural lighting,
-accurate shadows and reflections, and cinematic composition at human eye level.
-**Ensure the lighting accurately highlights the unique characteristics and luster of the stone.**
-Do not generate any text, watermarks, UI elements, or logos in the image.
+    // ---------------------------------------------------------
+    // 🛑 TEXTURE FIDELITY (Doku Sadakati) PROMPT AYARI
+    // ---------------------------------------------------------
+    // Modelin kendi kafasından taş uydurmasını engellemek için:
+    
+    const systemInstruction = `
+    You are an advanced 3D architectural visualizer specializing in 'Texture Mapping' and 'Photorealistic Rendering'.
+    
+    TASK:
+    Generate a high-resolution (8K), photorealistic interior/exterior scene based on the USER REQUEST below.
+    
+    CRITICAL MATERIAL INSTRUCTION (MANDATORY):
+    1. The Input Image provided is a specific slab of "Blue Jeans Marble" (Quarry: Erzurum, Turkey).
+    2. YOU MUST USE THE INPUT IMAGE AS THE EXACT TEXTURE SOURCE.
+    3. Do NOT generate a generic blue marble. Do NOT hallucinate new veins.
+    4. Project the pattern, colors, and unique defects of the Input Image directly onto the target surfaces (countertops, walls, etc.).
+    5. Maintain the exact vein structure and "Bookmatch" alignment if visible in the input.
+    6. The finish must be "High Gloss Polished" with physically accurate reflections (PBR).
+    
+    SCENE STYLE:
+    - Cinematic lighting, expensive atmosphere, architectural photography style.
+    - Aspect Ratio: 16:9.
+    - No text, no logos, no watermarks.
     `.trim();
-
-    const materialBlock = `
-The core material is premium Blue Jeans Marble ${slabLabel || ""}, a quarry-origin exotic dolomitic marble from Erzurum, Turkey.
-The generated scene must preserve the texture and pattern of the uploaded slab image: deep denim-blue tones,
-dramatic veining with bronze and white accents, and a fine crystalline structure.
-Use this slab image as the authoritative reference for color, veining direction and pattern density.
-Apply this Blue Jeans Marble to the key surfaces described by the user.
-The stone surface should appear highly polished with realistic reflections and subtle light bloom, without exaggeration.
-    `.trim();
-
-    const userBlock = `USER PROMPT: ${prompt}`;
 
     const finalPrompt = `
-${baseStyle}
-
-${materialBlock}
-
-Now follow the user request exactly and compose the best possible scene:
-
-${userBlock}
+    ${systemInstruction}
+    
+    USER REQUEST: ${prompt}
     `.trim();
 
-    // 4) Call Gemini 3 Pro Image
+    // 4) Gemini 3 Pro'yu Çağır
     const { imageBase64, mimeType } = await generateWithGeminiFlashImage({
       prompt: finalPrompt,
       slabBase64,
       slabMime,
     });
 
-    // 5) Send the result back
+    // 5) Sonucu Döndür
     return res.json({
       ok: true,
       imageBase64,
@@ -248,7 +221,7 @@ ${userBlock}
     console.error("🔥 [/api/design] ERROR:", err);
     return res.status(500).json({
       ok: false,
-      error: err.message || "Gemini request failed. Please try again.",
+      error: err.message || "Gemini 3 Pro request failed. Please try again.",
     });
   }
 });
@@ -262,8 +235,8 @@ const server = app.listen(PORT, () => {
   );
 });
 
-// 🛑 FIX 3: Global Server Timeouts (Critical for Render 504 Errors)
-// Forces the server to keep the connection open for 5 minutes (300,000 ms)
+// 🛑 FIX 3: GLOBAL SERVER TIMEOUT (5 Dakika)
+// Bu ayar Render sunucusunun bağlantıyı erken kesmesini engeller.
 server.setTimeout(300000);
 server.keepAliveTimeout = 120000;
 server.headersTimeout = 120000;
